@@ -571,5 +571,233 @@
       Digital Society · Imagining a shared future in 2060
     </div>
   </footer>
+<script>
+  const surveyEndpoint =
+    "https://script.google.com/a/macros/ucdconnect.ie/s/AKfycbyLWvqga1Wqkd1D9Ay9poC95GMNy7YbxNPsgTr67ZDNkiVwAfUOcePUYcclJVRVF-46/exec";
+
+  const charts = [
+    {
+      svg: document.getElementById("triangle-2026"),
+      key: "society2026",
+      label: "Society in 2026"
+    },
+    {
+      svg: document.getElementById("triangle-2060"),
+      key: "society2060",
+      label: "Society in 2060"
+    }
+  ];
+
+  const selections = {
+    society2026: null,
+    society2060: null
+  };
+
+  const submitButton = document.querySelector(".survey-submit");
+  const statusMessage = document.getElementById("survey-status");
+  const consentChecks = document.querySelectorAll(
+    ".survey-consent input[type='checkbox']"
+  );
+
+  function showStatus(message) {
+    if (statusMessage) {
+      statusMessage.textContent = message;
+    }
+  }
+
+  function getVertices(svg) {
+    const polygon = svg.querySelector(".triangle-shape");
+
+    if (!polygon) {
+      return null;
+    }
+
+    const numbers = polygon
+      .getAttribute("points")
+      .trim()
+      .split(/[\s,]+/)
+      .map(Number);
+
+    if (numbers.length !== 6) {
+      return null;
+    }
+
+    const points = [
+      { x: numbers[0], y: numbers[1] },
+      { x: numbers[2], y: numbers[3] },
+      { x: numbers[4], y: numbers[5] }
+    ];
+
+    const top = points.reduce((a, b) => a.y < b.y ? a : b);
+    const bottom = points.filter(point => point !== top);
+    const lowerLeft = bottom.reduce((a, b) => a.x < b.x ? a : b);
+    const lowerRight = bottom.find(point => point !== lowerLeft);
+
+    return [top, lowerLeft, lowerRight];
+  }
+
+  function getWeights(point, vertices) {
+    const [a, b, c] = vertices;
+
+    const denominator =
+      (b.y - c.y) * (a.x - c.x) +
+      (c.x - b.x) * (a.y - c.y);
+
+    const weightA =
+      ((b.y - c.y) * (point.x - c.x) +
+       (c.x - b.x) * (point.y - c.y)) / denominator;
+
+    const weightB =
+      ((c.y - a.y) * (point.x - c.x) +
+       (a.x - c.x) * (point.y - c.y)) / denominator;
+
+    const weightC = 1 - weightA - weightB;
+    const weights = [weightA, weightB, weightC];
+
+    if (weights.some(weight => weight < -0.02)) {
+      return null;
+    }
+
+    return weights.map(weight => Math.max(0, weight));
+  }
+
+  function toPercentages(weights) {
+    const exact = weights.map(weight => weight * 100);
+    const percentages = exact.map(Math.floor);
+    let remaining = 100 - percentages.reduce((sum, value) => sum + value, 0);
+
+    const largestRemainders = exact
+      .map((value, index) => ({
+        index,
+        remainder: value - percentages[index]
+      }))
+      .sort((a, b) => b.remainder - a.remainder);
+
+    for (let i = 0; i < remaining; i++) {
+      percentages[largestRemainders[i].index]++;
+    }
+
+    return {
+      security: percentages[0],
+      accountability: percentages[1],
+      fairAccess: percentages[2]
+    };
+  }
+
+  function updateReadout(chart, allocation) {
+    const card = chart.svg.closest(".triangle-card");
+    const readout = card?.querySelector(".allocation-readout");
+
+    if (readout) {
+      readout.textContent =
+        `Security ${allocation.security}% · ` +
+        `Accountability ${allocation.accountability}% · ` +
+        `Fair access ${allocation.fairAccess}%`;
+    }
+  }
+
+  function updateSubmitButton() {
+    const bothTrianglesSelected =
+      selections.society2026 !== null &&
+      selections.society2060 !== null;
+
+    const bothBoxesChecked =
+      consentChecks.length === 2 &&
+      Array.from(consentChecks).every(box => box.checked);
+
+    submitButton.disabled = !(bothTrianglesSelected && bothBoxesChecked);
+  }
+
+  charts.forEach(chart => {
+    if (!chart.svg) {
+      return;
+    }
+
+    chart.svg.addEventListener("click", event => {
+      const vertices = getVertices(chart.svg);
+      const screenMatrix = chart.svg.getScreenCTM();
+
+      if (!vertices || !screenMatrix) {
+        showStatus("The triangle could not be loaded. Please refresh the page.");
+        return;
+      }
+
+      const svgPoint = chart.svg.createSVGPoint();
+      svgPoint.x = event.clientX;
+      svgPoint.y = event.clientY;
+
+      const point = svgPoint.matrixTransform(screenMatrix.inverse());
+      const weights = getWeights(point, vertices);
+
+      if (!weights) {
+        showStatus("Please click inside the triangle.");
+        return;
+      }
+
+      const allocation = toPercentages(weights);
+      selections[chart.key] = allocation;
+
+      const marker = chart.svg.querySelector(".triangle-point");
+      if (marker) {
+        marker.setAttribute("cx", point.x);
+        marker.setAttribute("cy", point.y);
+      }
+
+      updateReadout(chart, allocation);
+      updateSubmitButton();
+      showStatus(`${chart.label} values set.`);
+    });
+  });
+
+  consentChecks.forEach(box => {
+    box.addEventListener("change", updateSubmitButton);
+  });
+
+  async function submitSurvey(event) {
+    event.preventDefault();
+
+    if (submitButton.disabled) {
+      showStatus("Choose values on both triangles and tick both boxes first.");
+      return;
+    }
+
+    submitButton.disabled = true;
+    showStatus("Sending your response…");
+
+    const responseData = {
+      society2026: selections.society2026,
+      society2060: selections.society2060,
+      consent: true,
+      firstTime: true
+    };
+
+    try {
+      await fetch(surveyEndpoint, {
+        method: "POST",
+        mode: "no-cors",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8"
+        },
+        body: JSON.stringify(responseData)
+      });
+
+      showStatus("Your submission request was sent. Thank you.");
+    } catch (error) {
+      submitButton.disabled = false;
+      updateSubmitButton();
+      showStatus("The response could not be sent. Please try again.");
+    }
+  }
+
+  const surveyForm = submitButton?.closest("form");
+
+  if (surveyForm) {
+    surveyForm.addEventListener("submit", submitSurvey);
+  } else if (submitButton) {
+    submitButton.addEventListener("click", submitSurvey);
+  }
+
+  updateSubmitButton();
+</script>
 </body>
 </html>
